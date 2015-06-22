@@ -76,7 +76,7 @@ class ParseWorkElem
         __parse_work_end__
     };
 
-    // allow direct access to setting order/frame type.
+    // allow direct access to setting order/frame type..
     ParseWorkElem(
             ParseWorkBundle *b, 
             parse_work_order o,
