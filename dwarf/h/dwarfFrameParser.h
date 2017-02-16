@@ -36,8 +36,10 @@
 #include "dyntypes.h"
 #include "dyn_regs.h"
 #include "ProcReader.h"
-#include "libdwarf.h"
+#include "elfutils/libdw.h"
 #include "util.h"
+
+typedef ::Dwarf *Dwarf_Debug;
 
 namespace Dyninst {
 
@@ -45,6 +47,7 @@ class VariableLocation;
 
 namespace Dwarf {
    class DwarfResult;
+
 typedef enum {
    FE_Bad_Frame_Data = 15,   /* to coincide with equivalent SymtabError */
    FE_No_Frame_Entry,
@@ -54,10 +57,10 @@ typedef enum {
 } FrameErrors_t;
 
 typedef struct {
-  Dwarf_Fde *fde_data;
-  Dwarf_Signed fde_count;
-  Dwarf_Cie *cie_data;
-  Dwarf_Signed cie_count;   
+  Dwarf_FDE *fde_data;
+  Dwarf_Sword fde_count;
+  Dwarf_CIE *cie_data;
+  Dwarf_Sword cie_count;
 } fde_cie_data;
 
 
@@ -102,31 +105,33 @@ class DYNDWARF_EXPORT DwarfFrameParser {
   private:
 
    bool getRegAtFrame_aux(Address pc,
-                          Dwarf_Fde fde,
+                          Dwarf_Frame *frame,
                           Dwarf_Half dwarf_reg,
                           MachRegister orig_reg,
                           DwarfResult &cons,
                           Address &lowpc,
                           FrameErrors_t &err_result);
 
-   bool getFDE(Address pc, 
-               Dwarf_Fde &fde, 
-               Address &low,
-               Address &high,
-               FrameErrors_t &err_result);
+   bool getFrame(Address pc, 
+                 Dwarf_Frame *&frame, 
+                 Address &low,
+                 Address &high,
+                 FrameErrors_t &err_result);
 
    bool getDwarfReg(MachRegister reg,
-                    Dwarf_Fde &fde,
+                    Dwarf_Frame *frame,
                     Dwarf_Half &dwarf_reg,
                     FrameErrors_t &err_result);
    
+#if 0
    bool handleExpression(Address pc,
-                         Dwarf_Signed registerNum,
+                         Dwarf_Sword registerNum,
                          MachRegister origReg,
                          Architecture arch,
                          DwarfResult &cons,
                          bool &done,
                          FrameErrors_t &err_result);
+#endif
    struct frameParser_key
    {
      Dwarf_Debug dbg;
@@ -152,7 +157,7 @@ class DYNDWARF_EXPORT DwarfFrameParser {
    Architecture arch;
    dwarf_status_t fde_dwarf_status;
 
-   std::vector<fde_cie_data> fde_data;
+   std::vector<Dwarf_CFI *> fde_data;
    void setupFdeData();
 
 

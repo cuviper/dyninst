@@ -2,8 +2,10 @@
 #include "dyntypes.h"
 #include <vector>
 #include <stack>
-#include "libdwarf.h"
+#include "elfutils/libdw.h"
 #include "util.h"
+
+typedef ::Dwarf *Dwarf_Debug;
 
 namespace Dyninst {
 

@@ -2415,50 +2415,52 @@ string Object::find_symbol(string name)
 
 #if defined(cap_dwarf)
 
-void pd_dwarf_handler(Dwarf_Error error, Dwarf_Ptr /*userData*/)
+void pd_dwarf_handler()
 {
-    if (error == NULL)
+    const char *dwarf_msg = dwarf_errmsg(0);
+    if (dwarf_msg == NULL)
         return;
 
-    char *dwarf_msg = dwarf_errmsg(error);
     string str = string("DWARF Error: ")+ dwarf_msg;
     dwarf_err_func(str.c_str());
 
     //bperr( "DWARF error: %s\n", dwarf_msg);
 }
 
-Dwarf_Signed declFileNo = 0;
+Dwarf_Sword declFileNo = 0;
 char ** declFileNoToName = NULL;
 
 bool Object::dwarf_parse_aranges(Dwarf_Debug dbg, std::set<Dwarf_Off>& dies_seen)
 {
-    Dwarf_Arange* ranges;
-    Dwarf_Signed num_ranges;
-    int status = dwarf_get_aranges(dbg, &ranges, &num_ranges, NULL);
-    if(status != DW_DLV_OK) return false;
-    Dwarf_Off cu_die_off;
-    Dwarf_Die cu_die;
+    Dwarf_Aranges* ranges;
+    size_t num_ranges;
+    int status = dwarf_getaranges(dbg, &ranges, &num_ranges);
+    if(status != 0) return false;
 //    cout << "Processing " << num_ranges << "DWARF ranges" << endl;
-    for(int i = 0; i < num_ranges; i++)
+    for(size_t i = 0; i < num_ranges; i++)
     {
+        Dwarf_Arange *range = dwarf_onearange(ranges, i);
+        if (!range) continue;
+
         Dwarf_Addr start;
-        Dwarf_Unsigned len, segment, segment_size;
-        // TODO: info_b has segment info from DWARF4
-        status = dwarf_get_arange_info_b(ranges[i], &segment, &segment_size, &start, &len, &cu_die_off, NULL);
-        assert(status == DW_DLV_OK);
-        if(segment_size > 0)
-        {
-            cout << "WARNING: ignoring segment info" << endl;
-        }
-        if(dies_seen.find(cu_die_off) != dies_seen.end()) continue;
+        Dwarf_Word len;
+        Dwarf_Off cu_die_off;
+        status = dwarf_getarangeinfo(range, &start, &len, &cu_die_off);
+        assert(status == 0);
+
+        if(dies_seen.count(cu_die_off) != 0) continue;
         if(len == 0) continue;
-        status = dwarf_offdie_b(dbg, cu_die_off, Dwarf_Bool(true), &cu_die, NULL);
-        assert(status == DW_DLV_OK);
+
+        Dwarf_Die cu_die, *cu_die_p;
+        cu_die_p = dwarf_offdie(dbg, cu_die_off, &cu_die);
+        assert(cu_die_p != NULL);
+
         std::string modname;
         if(!DwarfWalker::findDieName(dbg, cu_die, modname))
         {
             modname = associated_symtab->file(); // default module
         }
+
         Offset actual_start, actual_end;
         convertDebugOffset(start, actual_start);
         convertDebugOffset(start + len, actual_end);
@@ -2467,9 +2469,7 @@ bool Object::dwarf_parse_aranges(Dwarf_Debug dbg, std::set<Dwarf_Off>& dies_seen
         m->addDebugInfo(cu_die);
         DwarfWalker::buildSrcFiles(dbg, cu_die, m->getStrings());
         dies_seen.insert(cu_die_off);
-        dwarf_dealloc(dbg, ranges[i], DW_DLA_ARANGE);
     }
-    dwarf_dealloc(dbg, ranges, DW_DLA_LIST);
     return true;
 }
 
@@ -2481,24 +2481,21 @@ bool Object::fix_global_symbol_modules_static_dwarf()
         return false;
     Dwarf_Debug dbg = *dbg_ptr;
     std::set<Dwarf_Off> dies_seen;
-    Dwarf_Off cu_die_off;
-    Dwarf_Die cu_die;
     dwarf_parse_aranges(dbg, dies_seen);
+
     /* Iterate over the compilation-unit headers. */
-    while (dwarf_next_cu_header_c(dbg, Dwarf_Bool(true),
-                                  NULL,
-                                  NULL,
-                                  NULL,
-                                  NULL,
-                                  NULL,
-                                  NULL,
-                                  NULL,
-                                  NULL,
-                                  &cu_die_off, NULL) == DW_DLV_OK )
+    size_t cu_header_size;
+    for (Dwarf_Off cu_off = 0, next_cu_off;
+         dwarf_nextcu(dbg, cu_off, &next_cu_off, &cu_header_size,
+                      NULL, NULL, NULL) == 0;
+         cu_off = next_cu_off)
     {
-        int status = dwarf_siblingof_b(dbg, NULL, Dwarf_Bool(true), &cu_die, NULL);
-        assert(status == DW_DLV_OK);
-        if(dies_seen.find(cu_die_off) != dies_seen.end()) continue;
+        Dwarf_Off cu_die_off = cu_off + cu_header_size;
+        Dwarf_Die cu_die, *cu_die_p;
+        cu_die_p = dwarf_offdie(dbg, cu_die_off, &cu_die);
+        assert(cu_die_p != NULL);
+        if(dies_seen.count(cu_die_off) != 0) continue;
+
         std::string modname;
         if(!DwarfWalker::findDieName(dbg, cu_die, modname))
         {
@@ -2521,25 +2518,31 @@ bool Object::fix_global_symbol_modules_static_dwarf()
         if(!m->hasRanges())
         {
 //            cout << "No ranges for module " << modname << ", need to extract from statements\n";
-            Dwarf_Line* lines;
-            Dwarf_Signed num_lines;
-            if(dwarf_srclines(cu_die, &lines, &num_lines, NULL) == DW_DLV_OK)
+            Dwarf_Lines* lines;
+            size_t num_lines;
+            if(dwarf_getsrclines(&cu_die, &lines, &num_lines) == 0)
             {
                 Dwarf_Addr low;
-                for(int i = 0; i < num_lines; ++i)
+                for(size_t i = 0; i < num_lines; ++i)
                 {
-                    if((dwarf_lineaddr(lines[i], &low, NULL) == DW_DLV_OK) && low)
+                    Dwarf_Line *line = dwarf_onesrcline(lines, i);
+                    if (!line) continue;
+
+                    if((dwarf_lineaddr(line, &low) == 0) && low)
                     {
-                        Dwarf_Bool is_end = false;
+                        bool is_end = false;
                         Dwarf_Addr high = low;
-                        int result = DW_DLV_OK;
+                        int result = 0;
                         for(; (i < num_lines) &&
                                       (is_end == false) &&
-                                      (result == DW_DLV_OK); ++i)
+                                      (result == 0); ++i)
                         {
-                            result = dwarf_lineendsequence(lines[i], &is_end, NULL);
-                            if(result == DW_DLV_OK && is_end) {
-                                result = dwarf_lineaddr(lines[i], &high, NULL);
+                            line = dwarf_onesrcline(lines, i);
+                            if (!line) continue;
+
+                            result = dwarf_lineendsequence(line, &is_end);
+                            if(result == 0 && is_end) {
+                                result = dwarf_lineaddr(line, &high);
                             }
 
                         }
@@ -2548,7 +2551,6 @@ bool Object::fix_global_symbol_modules_static_dwarf()
                         m->addRange(low, high);
                     }
                 }
-                dwarf_srclines_dealloc(dbg, lines, num_lines);
             }
         }
         m->addDebugInfo(cu_die);
@@ -3158,6 +3160,7 @@ bool parseCompilerType(Object *objPtr)
 
 #if (defined(os_linux) || defined(os_freebsd))
 
+#if 0 // TODO
 static unsigned long read_uleb128(const unsigned char *data, unsigned *bytes_read)
 {
     unsigned long result = 0;
@@ -3340,14 +3343,14 @@ static int read_val_of_type(int type, unsigned long *value, const unsigned char 
 #define SHORT_FDE_HLEN 4
 #define LONG_FDE_HLEN 12
 static
-int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
+int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Sword fde_count,
                            mach_relative_info &mi,
                            Elf_X_Shdr *eh_frame, Elf_X_Shdr *except_scn,
                            std::vector<ExceptionBlock> &addresses)
 {
     Dwarf_Error err = (Dwarf_Error) NULL;
     Dwarf_Addr low_pc;
-    Dwarf_Unsigned bytes_in_cie;
+    Dwarf_Word bytes_in_cie;
     Dwarf_Off fde_offset, cie_offset;
     Dwarf_Fde fde;
     Dwarf_Cie cie;
@@ -3356,8 +3359,8 @@ int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
     unsigned char lpstart_format, ttype_format, table_format;
     unsigned long value, table_end, region_start, region_size, landingpad_base;
     unsigned long catch_block, action, augmentor_len;
-    Dwarf_Small *fde_augdata, *cie_augdata;
-    Dwarf_Unsigned fde_augdata_len, cie_augdata_len;
+    uint8_t *fde_augdata, *cie_augdata;
+    Dwarf_Word fde_augdata_len, cie_augdata_len;
 
     //For each FDE
     for (int i = 0; i < fde_count; i++) {
@@ -3370,9 +3373,9 @@ int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
         unsigned char *fde_bytes, *cie_bytes;
 
         //Get the FDE
-        status = dwarf_get_fde_n(fde_data, (Dwarf_Unsigned) i, &fde, &err);
+        status = dwarf_get_fde_n(fde_data, (Dwarf_Word) i, &fde, &err);
         if (status != DW_DLV_OK) {
-            pd_dwarf_handler(err, NULL);
+            pd_dwarf_handler();
             return false;
         }
 
@@ -3384,7 +3387,7 @@ int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
                                      NULL, &cie_offset, NULL,
                                      &fde_offset, &err);
         if (status != DW_DLV_OK) {
-            pd_dwarf_handler(err, NULL);
+            pd_dwarf_handler();
             return false;
         }
         //The LSB strays from the DWARF here, when parsing the except_eh section
@@ -3397,7 +3400,7 @@ int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
         //Get the CIE for the FDE
         status = dwarf_get_cie_of_fde(fde, &cie, &err);
         if (status != DW_DLV_OK) {
-            pd_dwarf_handler(err, NULL);
+            pd_dwarf_handler();
             return false;
         }
 
@@ -3405,7 +3408,7 @@ int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
         status = dwarf_get_cie_info(cie, &bytes_in_cie, NULL, &augmentor,
                                     NULL, NULL, NULL, NULL, NULL, &err);
         if (status != DW_DLV_OK) {
-            pd_dwarf_handler(err, NULL);
+            pd_dwarf_handler();
             return false;
         }
 
@@ -3439,7 +3442,7 @@ int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
                                                  &cie_augdata_len,
                                                  &err);
         if (status != DW_DLV_OK) {
-            pd_dwarf_handler(err, NULL);
+            pd_dwarf_handler();
             return false;
         }
 
@@ -3489,7 +3492,7 @@ int read_except_table_gcc3(Dwarf_Fde *fde_data, Dwarf_Signed fde_count,
                                                  &fde_augdata_len,
                                                  &err);
         if (status != DW_DLV_OK) {
-            pd_dwarf_handler(err, NULL);
+            pd_dwarf_handler();
             return false;
         }
         cur_augdata = (unsigned char *) fde_augdata;
@@ -3655,6 +3658,7 @@ static bool read_except_table_gcc2(Elf_X_Shdr *except_table,
     }
     return true;
 }
+#endif // TODO
 
 struct  exception_compare: public binary_function<const ExceptionBlock &, const ExceptionBlock &, bool>
 {
@@ -3676,11 +3680,12 @@ bool Object::find_catch_blocks(Elf_X_Shdr *eh_frame,
                                Address txtaddr, Address dataaddr,
                                std::vector<ExceptionBlock> &catch_addrs)
 {
+#if 0 // TODO
     Dwarf_Cie *cie_data;
     Dwarf_Fde *fde_data;
-    Dwarf_Signed cie_count, fde_count;
+    Dwarf_Sword cie_count, fde_count;
     Dwarf_Error err = (Dwarf_Error) NULL;
-    Dwarf_Unsigned bytes_in_cie;
+    Dwarf_Word bytes_in_cie;
     char *augmentor;
     int status, gcc_ver = 3;
     unsigned i;
@@ -3693,7 +3698,7 @@ bool Object::find_catch_blocks(Elf_X_Shdr *eh_frame,
 
     Dwarf_Debug *dbg_ptr = dwarf->frame_dbg();
     if (!dbg_ptr) {
-        pd_dwarf_handler(err, NULL);
+        pd_dwarf_handler();
         return false;
     }
     Dwarf_Debug &dbg = *dbg_ptr;
@@ -3719,7 +3724,7 @@ bool Object::find_catch_blocks(Elf_X_Shdr *eh_frame,
         status = dwarf_get_cie_info(cie_data[i], &bytes_in_cie, NULL,
                                     &augmentor, NULL, NULL, NULL, NULL, NULL, &err);
         if (status != DW_DLV_OK) {
-            pd_dwarf_handler(err, NULL);
+            pd_dwarf_handler();
             goto cleanup;
         }
         if (augmentor[0] == 'e' && augmentor[1] == 'h') {
@@ -3749,6 +3754,9 @@ bool Object::find_catch_blocks(Elf_X_Shdr *eh_frame,
     dwarf_dealloc(dbg, fde_data, DW_DLA_LIST);
 
     return result;
+#else // TODO
+    return false;
+#endif // TODO
 }
 
 #endif
@@ -3950,7 +3958,7 @@ void Object::getModuleLanguageInfo(dyn_hash_map<string, supportedLanguages> *mod
             return;
         Dwarf_Debug &dbg = *dbg_ptr;
 
-        Dwarf_Unsigned hdr;
+        Dwarf_Word hdr;
         char * moduleName = NULL;
         Dwarf_Die moduleDIE = NULL;
         Dwarf_Attribute languageAttribute = NULL;
@@ -3967,7 +3975,7 @@ void Object::getModuleLanguageInfo(dyn_hash_map<string, supportedLanguages> *mod
                                        & hdr, NULL ) == DW_DLV_OK )
         {
             Dwarf_Half moduleTag;
-            Dwarf_Unsigned languageConstant;
+            Dwarf_Word languageConstant;
 
             status = dwarf_siblingof_b(dbg, NULL, is_info, &moduleDIE, NULL);
             if (status != DW_DLV_OK) {
@@ -4312,11 +4320,11 @@ void Object::parseStabFileLineInfo()
 } /* end parseStabFileLineInfo() */
 
 struct open_statement {
-    Dwarf_Unsigned string_table_index;
+    Dwarf_Word string_table_index;
     Dwarf_Addr start_addr;
     Dwarf_Addr end_addr;
-    Dwarf_Unsigned line_number;
-    Dwarf_Signed column_number;
+    Dwarf_Word line_number;
+    Dwarf_Sword column_number;
 };
 
 
@@ -4330,7 +4338,7 @@ void Object::parseLineInfoForCU(Dwarf_Die cuDIE, LineInformation* li_for_module)
     Dwarf_Debug dbg = *dbg_ptr;
     /* Acquire this CU's source lines. */
     Dwarf_Line * lineBuffer;
-    Dwarf_Signed lineCount;
+    Dwarf_Sword lineCount;
     Dwarf_Error ignored;
     int status = dwarf_srclines( cuDIE, & lineBuffer, & lineCount, &ignored );
 
@@ -4349,7 +4357,7 @@ void Object::parseLineInfoForCU(Dwarf_Die cuDIE, LineInformation* li_for_module)
     StringTablePtr strings(li_for_module->getStrings());
     char** files;
     size_t offset = strings->size();
-    Dwarf_Signed filecount;
+    Dwarf_Sword filecount;
     status = dwarf_srcfiles(cuDIE, &files, &filecount, &ignored);
     assert( status == DW_DLV_OK );
     // dwarf_line_srcfileno == 0 means unknown; 1...n means files[0...n-1]

@@ -28,7 +28,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libdwarf.h"
+#include "elfutils/libdw.h"
 #include "Elf_X.h"
 #include "dwarfHandle.h"
 #include "dwarfFrameParser.h"
@@ -50,14 +50,14 @@ using namespace std;
 #define EM_AARCH64 183
 #endif
 
-void DwarfHandle::defaultDwarfError(Dwarf_Error err, Dwarf_Ptr p) {
-    dwarf_dealloc(*(Dwarf_Debug*)(p), err, DW_DLA_ERROR);
-}
+// void DwarfHandle::defaultDwarfError(Dwarf_Error err, Dwarf_Ptr p) {
+//     dwarf_dealloc(*(Dwarf_Debug*)(p), err, DW_DLA_ERROR);
+// }
 
-Dwarf_Handler DwarfHandle::defaultErrFunc = DwarfHandle::defaultDwarfError;
+// Dwarf_Handler DwarfHandle::defaultErrFunc = DwarfHandle::defaultDwarfError;
 
 DwarfHandle::DwarfHandle(string filename_, Elf_X *file_,
-                         Dwarf_Handler err_func_) :
+                         void* /*Dwarf_Handler err_func_*/) :
    init_dwarf_status(dwarf_status_uninitialized),
    dbg_file_data(NULL),
    file_data(NULL),
@@ -66,7 +66,7 @@ DwarfHandle::DwarfHandle(string filename_, Elf_X *file_,
    frame_data(NULL),
    file(file_),
    dbg_file(NULL),
-   err_func(err_func_),
+   // err_func(err_func_),
    filename(filename_)
 {
 
@@ -90,8 +90,8 @@ void DwarfHandle::locate_dbg_file()
 
 bool DwarfHandle::init_dbg()
 {
-   int status;
-   Dwarf_Error err;
+   // int status;
+   // Dwarf_Error err;
    if (init_dwarf_status == dwarf_status_ok) {
       return true;
    }
@@ -100,17 +100,21 @@ bool DwarfHandle::init_dbg()
       return false;
    }
 
-   status = dwarf_elf_init(file->e_elfp(), DW_DLC_READ,
-                           err_func, &file_data, &file_data, &err);
-   if (status != DW_DLV_OK) {
+   file_data = dwarf_begin_elf(file->e_elfp(), DWARF_C_READ, NULL);
+   // status = dwarf_elf_init(file->e_elfp(), DW_DLC_READ,
+   //                         err_func, &file_data, &file_data, &err);
+   // if (status != DW_DLV_OK) {
+   if (!file_data) {
       init_dwarf_status = dwarf_status_error;
       return false;
    }
 
    if (dbg_file) {
-      status = dwarf_elf_init(dbg_file->e_elfp(), DW_DLC_READ,
-                              err_func, &dbg_file_data, &dbg_file_data, &err);
-      if (status != DW_DLV_OK) {
+      dbg_file_data = dwarf_begin_elf(dbg_file->e_elfp(), DWARF_C_READ, NULL);
+      // status = dwarf_elf_init(dbg_file->e_elfp(), DW_DLC_READ,
+      //                         err_func, &dbg_file_data, &dbg_file_data, &err);
+      // if (status != DW_DLV_OK) {
+      if (!dbg_file_data) {
          init_dwarf_status = dwarf_status_error;
          return false;
       }
@@ -229,16 +233,16 @@ DwarfHandle::~DwarfHandle()
    if (init_dwarf_status != dwarf_status_ok)
       return;
 
-   Dwarf_Error err;
+   // Dwarf_Error err;
    if (dbg_file_data)
-      dwarf_finish(dbg_file_data, &err);
+      dwarf_end(dbg_file_data);
    if (file_data)
-      dwarf_finish(file_data, &err);
+      dwarf_end(file_data);
 }
 
 map<std::string, DwarfHandle::ptr> DwarfHandle::all_dwarf_handles;
 DwarfHandle::ptr DwarfHandle::createDwarfHandle(string filename_, Elf_X *file_,
-                                                Dwarf_Handler err_func_)
+                                                void* /*Dwarf_Handler err_func_*/)
 {
    map<string, DwarfHandle::ptr>::iterator i;
    i = all_dwarf_handles.find(filename_);
@@ -246,7 +250,7 @@ DwarfHandle::ptr DwarfHandle::createDwarfHandle(string filename_, Elf_X *file_,
       return i->second;
    }
 
-   DwarfHandle::ptr ret = DwarfHandle::ptr(new DwarfHandle(filename_, file_, err_func_));
+   DwarfHandle::ptr ret = DwarfHandle::ptr(new DwarfHandle(filename_, file_, NULL/*err_func_*/));
    all_dwarf_handles.insert(make_pair(filename_, ret));
    return ret;
 }

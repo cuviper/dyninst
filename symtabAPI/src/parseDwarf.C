@@ -32,7 +32,7 @@
 #include "elf.h"
 #include "libelf.h"
 #include "dwarf.h"
-#include "libdwarf.h"
+#include "elfutils/libdw.h"
 #include "dwarfExprParser.h"
 #include "dwarfFrameParser.h"
 
@@ -50,6 +50,7 @@
 #include "annotations.h"
 #include "debug.h"
 
+#if 0
 #ifndef DW_FRAME_CFA_COL3
 //  This is a newer feature of libdwarf (which has been causing some other 
 //  compilation problems locally) -- so we just fudge it for the moment
@@ -59,10 +60,10 @@ extern "C" {
 int dwarf_get_fde_info_for_cfa_reg3(
 		Dwarf_Fde /*fde*/,
 		Dwarf_Addr       /*pc_requested*/, 
-		Dwarf_Small  *   /*value_type*/, 
-		Dwarf_Signed *   /*offset_relevant*/,
-		Dwarf_Signed *    /*register*/,  
-		Dwarf_Signed *    /*offset_or_block_len*/,
+		uint8_t  *   /*value_type*/, 
+		Dwarf_Sword *   /*offset_relevant*/,
+		Dwarf_Sword *    /*register*/,  
+		Dwarf_Sword *    /*offset_or_block_len*/,
 		Dwarf_Ptr   *    /*block_ptr */,
 		Dwarf_Addr*      /*row_pc_out*/,
 		Dwarf_Error*     /*error*/)
@@ -71,6 +72,7 @@ int dwarf_get_fde_info_for_cfa_reg3(
 	return 0;
 }
 }
+#endif
 #endif
 
 using namespace Dyninst;
@@ -88,7 +90,7 @@ std::string convertCharToString(char *ptr)
   return str;	
 }
 
-extern void pd_dwarf_handler( Dwarf_Error, Dwarf_Ptr );
+/* extern void pd_dwarf_handler( Dwarf_Error, Dwarf_Ptr ); */
 
 void Object::parseDwarfTypes( Symtab *) 
 {

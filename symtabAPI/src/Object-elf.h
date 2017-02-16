@@ -39,7 +39,7 @@
 
 #if defined(cap_dwarf)
 //#include "dwarf.h"
-#include "libdwarf.h"
+#include "elfutils/libdw.h"
 #include "dwarfHandle.h"
 #endif
 
@@ -63,6 +63,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+
+typedef ::Dwarf *Dwarf_Debug;
 
 namespace Dyninst{
 

@@ -7,7 +7,7 @@
 
 #include "elf.h"
 #include "libelf.h"
-#include "libdwarf.h"
+#include "elfutils/libdw.h"
 #include <stack>
 #include <vector>
 #include <string>
@@ -18,6 +18,14 @@
 #include "Object.h"
 #include <boost/shared_ptr.hpp>
 #include <Collections.h>
+
+typedef ::Dwarf *Dwarf_Debug;
+typedef int Dwarf_Tag;
+typedef bool Dwarf_Bool;
+typedef Dwarf_Word Dwarf_Sig8;
+
+// FIXME
+typedef void Dwarf_Locdesc;
 
 namespace Dyninst {
     namespace SymtabAPI {
@@ -75,7 +83,7 @@ namespace Dyninst {
                         func(NULL), commonBlock(NULL),
                         enumType(NULL), enclosure(NULL),
                         parseSibling(true), parseChild(true),
-                        entry(NULL), specEntry(NULL), abstractEntry(NULL),
+                        entry(), specEntry(), abstractEntry(),
                         offset(0), tag(0), base(0) {};
             };
 
@@ -188,7 +196,7 @@ namespace Dyninst {
             // whereas parse creates a context.
             bool parse_int(Dwarf_Die entry, bool parseSiblings);
             static std::pair<std::vector<Dyninst::SymtabAPI::AddressRange>::iterator, std::vector<Dyninst::SymtabAPI::AddressRange>::iterator>
-            parseRangeList(Dwarf_Ranges *ranges, Dwarf_Signed num_ranges, Offset initial_base);
+            parseRangeList(Dwarf_Aranges *ranges, Dwarf_Sword num_ranges, Offset initial_base);
         private:
             enum inline_t {
                 NormalFunc,
@@ -259,7 +267,7 @@ namespace Dyninst {
             bool findAnyType(Dwarf_Attribute typeAttribute,
                              Dwarf_Bool is_info, Type *&type);
             bool findDieOffset(Dwarf_Attribute attr, Dwarf_Off &offset);
-            bool getLineInformation(Dwarf_Unsigned &variableLineNo,
+            bool getLineInformation(Dwarf_Word &variableLineNo,
                                     bool &hasLineNumber,
                                     std::string &filename);
         public:
@@ -305,11 +313,11 @@ namespace Dyninst {
                                   std::vector<VariableLocation> &locs);
 
             bool decodeLocationListForStaticOffsetOrAddress(Dwarf_Locdesc **locationList,
-                                                            Dwarf_Signed listLength,
+                                                            Dwarf_Sword listLength,
                                                             std::vector<VariableLocation>& locs,
                                                             Address * initialStackValue = NULL);
             void deallocateLocationList(Dwarf_Locdesc **locationList,
-                                        Dwarf_Signed listLength);
+                                        Dwarf_Sword listLength);
 
 
             // Header-only functions get multiple parsed.
@@ -323,15 +331,15 @@ namespace Dyninst {
             // Per-module info
             Address modLow;
             Address modHigh;
-            Dwarf_Unsigned cu_header_length;
+            Dwarf_Word cu_header_length;
             Dwarf_Half version;
-            Dwarf_Unsigned abbrev_offset;
+            Dwarf_Word abbrev_offset;
             Dwarf_Half addr_size;
             Dwarf_Half offset_size;
             Dwarf_Half extension_size;
             Dwarf_Sig8 signature;
-            Dwarf_Unsigned typeoffset;
-            Dwarf_Unsigned next_cu_header;
+            Dwarf_Word typeoffset;
+            Dwarf_Word next_cu_header;
 
             // For debugging purposes; to match dwarfdump's output,
             // we need to subtract a "header overall offset".
@@ -354,14 +362,14 @@ namespace Dyninst {
             virtual void setFuncReturnType();
 
             virtual void createLocalVariable(const std::vector<VariableLocation> &locs, Type *type,
-                                     Dwarf_Unsigned variableLineNo,
+                                     Dwarf_Word variableLineNo,
                                      const std::string &fileName);
 
             virtual bool createInlineFunc();
 
             virtual void setFuncFromLowest(Address lowest);
 
-            virtual void createParameter(const std::vector<VariableLocation> &locs, Type *paramType, Dwarf_Unsigned lineNo,
+            virtual void createParameter(const std::vector<VariableLocation> &locs, Type *paramType, Dwarf_Word lineNo,
                          const std::string &fileName);
 
             virtual void setRanges(FunctionBase *func);
